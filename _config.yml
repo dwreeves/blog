@@ -1,7 +1,8 @@
 title: Daniel Reeves - Blog
 description: >-
   I write things.
-url: "https://dwreeves.github.io/blog"
+baseurl: "/blog"
+url: "https://dwreeves.github.io"
 twitter_username: mueblesfeos
 github_username:  dwreeves
 

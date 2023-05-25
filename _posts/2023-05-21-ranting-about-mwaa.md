@@ -78,13 +78,13 @@ Deferrable operators have existed in Airflow since Airflow 2.2, which came out i
 
 Deferrable operators are a _massive_ quality of life improvement, considering that Airflow workers often spend the majority of their time waiting for some ECS task, SQL query, or for the clock to strike 02:00 UTC. So compute allocated to synchronous workers is often wasted. Deferrable operators would be a huge cost saving. But this still does not exist in MWAA.
 
-MWAA is reportedly working on getting triggerer instances in and they aim to have it done by end of 2023, so there is a silver lining. Still, it's unfortunate it has taken so long and continues to take so long.
+MWAA is reportedly working on getting triggerer instances in, and they aim to have it done by the end of 2023, so there is a silver lining. Still, it's unfortunate it has taken so long and continues to take so long.
 
 ## Updating pip dependencies is tedious
 
-MWAA locks the `requirements.txt` and never changes it once deployed. There is neither an option nor even a script provided by AWS to help automatically update pip dependencies, although you can roll your own script (see further down).
+MWAA locks the `requirements.txt` to a specific version of an object in an S3 bucket, and never changes updates it once deployed. There is neither an option nor even a script provided by AWS to help automatically update pip dependencies, although you can roll your own script (see further down).
 
-The way AWS encourages you to update pip dependencies is to update the entire environment through the UI, which requires full administrative permissions and is very detached from the reality of how infrastructure-as-code deployments are managed.
+The way AWS encourages you to update pip dependencies is to update the entire environment through the UI and manually select a new version of the `requirements.txt`, which requires full administrative permissions and is very detached from the reality of how infrastructure-as-code deployments are managed.
 
 Additionally and more critically, updating an Airflow environment takes 20 minutes and causes everything to restart, meaning running jobs will stall out and fail. And since there is no way to update pip dependencies without restarting everything, you'll feel the pain of this! You cannot `pip install -r requirements.txt` in a running Airflow instance without restarting everything. In theory, this should be perfectly safe to do, but again, MWAA does not really care about user friendliness.
 
@@ -104,10 +104,11 @@ Let me highlight all the issues with these scripts that I've run into:
 
 - The export script uses a 3rd party dep called `smart-open`. This is a nice library, sure, but (1) it is never actually mentioned as being a required dependency for the deployment. (2) Combine with the frustrations above about updating `requirements.txt` and you're looking at an environment update (ugh!) for your old env on top of a new deployment! Why not just use boto3?
 - The import script amateurishly `try: ... except Exception as e: print(e)`s critical parts of the code, for no good reason. And these are parts of the code that are likely to fail on your first try, too! So make sure to check your green dots because they may be lying to you, and may not actually worked! (My advice: Just remove these try-excepts.)
-- The import and export scripts do not migrate the `trigger` table (introduced in 2.2.0), and because the `task_instance` table has a foreign key constraint referencing the `trigger` entity, you may have a fail due to this. I did not want to deal with this, so I just replaced `trigger_id` with `null as trigger_id` in the select statement for the `task_instance` export.
+- Both the import and export scripts do not migrate the `trigger` table (introduced in 2.2.0), and because the `task_instance` table has a foreign key constraint referencing the `trigger` entity, you may have a fail due to this. I did not want to deal with this, so I just replaced `trigger_id` with `null as trigger_id` in the select statement for the `task_instance` export.
 - The export scripts contain a lot of `null as ...` which are vestiges of previous migrations. Compare the 2.0->2.2 migration to the 2.2->2.4 export script and you'll see exactly what I'm talking about. (To be clear, the correct pattern is you `null as ...` on the first migration, and on all subsequent migrations you are actually supposed to select the column.)
 - The import scripts really mess up the log streams in two devastating and terrible ways: (1) if a single log stream already exists, the import fails completely. This is easy to work around, but very annoying that you have to do it. (2) The code barely reads in any logs at all, simply telling you `This only copies 1 MB of data. For more logs, create code to iterate the get_log_event using next_token`. What kind of maniac is only importing 1 MB of logs per log stream? Why is this the default???
 - The export script for 2.2->2.x contains `AND ti.dag_id != '{dag_id}'` (this is not in 2.0, lol), where `dag_id` is the export script's DAG id, but this is incomplete. It is imperative to exclude _both_ the export _and_ import DAG ids as being excluded from the `task_instance` export. If you don't do this, then the MWAA import script will fail on a key constraint if your import doesn't work on the first go around! (Since the task instances for the import DAG will exist in the new environment's metadata store after your first run... you see the issue?).
+- Both the import and export scripts are not PEP-8 compliant. This isn't a big deal, but, cmon. Many of us are using linters as part of our CI / precommits!
 
 It's clear the person who manages these scripts is probably a junior engineer. **And I'm not here to dunk on and complain about some individual junior engineer's code.** This is clearly a management issue where AWS does not care at all about its customers who use MWAA. The fact they have a junior engineer working on this in the first place, seemingly without any oversight or serious review, is the evidence of that lack of care.
 
@@ -127,7 +128,7 @@ The `mwaa-local-runner` is the local runtime for MWAA. Overall, it does a decent
 
 This is technically documented, so I guess F me for not reading the docs carefully, but I spent a long time figuring out why my webserver instance was cryptically failing to pip install all our deps when it worked locally.
 
-Turns out, in MWAA 2.5.1, they started enforcing that you use a constraint file in your dependencies; if you don't use one, they'll add one for you. Why? I don't know!!! The whole point of the constraint file is that it exists to serve as a stable and suggested release, but that you are also allowed to circumvent it if you want / need. It's merely a suggestion; if it was a hard requirement it would be pinned in the `setup.py`. Adding a constraint file just serves as a guardrail for the least qualified data engineers / devops engineers who don't know how to freeze deps, and pisses off people who have stable and frozen dependencies.
+Turns out, in MWAA 2.5.1, they started enforcing that you use a constraint file in your dependencies; if you don't use one, they'll add one for you. Why? I don't know!!! The whole point of the constraint file is that it exists to serve as a stable and suggested release, but that you are also allowed to circumvent it if you want / need. It's merely a suggestion; if it was a hard requirement it would be pinned in the `setup.py`. Adding a _mandated_ constraint file just serves as a guardrail for the least qualified data engineers / devops engineers who don't know how to freeze deps, and pisses off people who have stable and frozen dependencies.
 
 So, anyway, how do you cheat around it? Simple: Just add a constraint file to the requirements, but then comment it out. Dead serious. Whatever regex they're doing to enforce the constraint can be tricked into thinking there is a constraint file by adding the following to your `requirements.txt`, inclusive of the `#` to comment it out:
 
@@ -138,6 +139,16 @@ So, anyway, how do you cheat around it? Simple: Just add a constraint file to th
 Adding this comment to our requirements allowed us to get an installation working properly.
 
 Anyway, MWAA really, really, really should not be doing this constraint enforcement thing. This solves zero problems for anyone who isn't a novice, and only serves to create problems for people who have weird requirements. It is a massive anti-pattern as far as dependency management is concerned. And if they are going to do this (which they shouldn't!), at least provide more informative warnings + error messages in CloudWatch that this is happening. Genuinely, this ended up being a massive migration headache going from 2.2 to 2.5.
+
+## MWAA requires 2 CloudFormation stacks
+
+This is more of a funny observation than something that can likely be fixed, but it's still worth mentioning as a minor deployment quirk.
+
+If you point to a `requirements.txt` file or `dags/` folder that doesn't exist in the S3 bucket, your MWAA CloudFormation stack will go into ROLLBACK. Except, when you create the S3 bucket as part of the CloudFormation stack, the S3 bucket is empty!
+
+This means, for all intents and purposes, a full CloudFormation-managed deployment needs two stacks: one for the S3 bucket (you can throw the Lambda into this stack, too, if you're doing the trick I mention above), and another for the actual MWAA runtime.
+
+If you think about it, this isn't totally unreasonable behavior. Still, you can chalk this up as another minor clumsy aspect of the MWAA ecosystem.
 
 ## Misc. advice on configuring MWAA
 
@@ -150,6 +161,6 @@ Anyway, MWAA really, really, really should not be doing this constraint enforcem
 
 I think I'm missing a few things, but I think that's plenty. I hope that if you are an MWAA user that you learned a few tricks for how to improve your own MWAA environment from this post. And maybe when you go to migrate to 2.5, you are able to fix a bug you encounter because you read about it here.
 
-Would I use MWAA again? Honestly, I guess. Our organization does not use Kubernetes, so a nice, self managed Kubernetes + Helm installation was obviously off the table. Managing your own deployment outside of Kubernetes is a fool's errand. And now that I am very familiar with MWAA and know all the issues and workarounds, I can deal with it.
+Would I use MWAA again? Honestly, I guess. Our organization does not use Kubernetes, so a nice, self managed Kubernetes + Helm installation was obviously off the table. Managing your own deployment outside of Kubernetes is a fool's errand, in my opinion. And now that I am very familiar with MWAA and know all the issues and workarounds, I can deal with it.
 
 Still, it would be nice if MWAA was a better product that prioritized a smooth customer experience. It could be that one day, but it is currently not that.

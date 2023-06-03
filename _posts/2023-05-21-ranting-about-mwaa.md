@@ -88,7 +88,23 @@ The way AWS encourages you to update pip dependencies is to update the entire en
 
 Additionally and more critically, updating an Airflow environment takes 20 minutes and causes everything to restart, meaning running jobs will stall out and fail. And since there is no way to update pip dependencies without restarting everything, you'll feel the pain of this! You cannot `pip install -r requirements.txt` in a running Airflow instance without restarting everything. In theory, this should be perfectly safe to do, but again, MWAA does not really care about user friendliness.
 
-Although you cannot get around needing to restart everything, automatically updating pip dependencies on `requirements.txt` changes is doable by setting up an AWS Lambda that, on changes to the S3 code bucket, runs a check to see whether the contents of `requirements.txt` used by the MWAA environment differs from the latest version of `requirements.txt`; if there is a change, then run an `update-environment`. Alternatively, because of the downsides of `update-environment`, you may want to forego the Lambda and instead have this be a manually triggerable job in your devops platform. At our company, we went with an AWS Lambda in Node.js, but I'm not sure if that should've actually been a Lambda or not.
+Although you cannot get around needing to restart everything, automatically updating pip dependencies on `requirements.txt` changes is doable by setting up an AWS Lambda that, on changes to the S3 code bucket, runs a check to see whether the contents of `requirements.txt` used by the MWAA environment differs from the latest version of `requirements.txt`; if there is a change, then run an `update-environment`. Alternatively, because of the downsides of `update-environment`, you may want to forego the Lambda and instead have this be a manually triggerable job in either your devops platform or Airflow itself (albeit the latter requires some IAM that your devops/secops team may raise an eyebrow at). At our company, we went with an AWS Lambda in Node.js, but I'm not sure if that should've actually been a Lambda or not.
+
+## Be careful of `PRIVATE_ONLY` mode gotchas
+
+AWS recommends setting `WebserverAccessMode` to `PRIVATE_ONLY` so it is only accessible via your company's VPC without any inbound or outbound external traffic.  This _is_ good practice, but it comes with a big gotcha to be mindful of: external `pip install`s will not work on your WebServer instance.
+
+AWS documentation tells you to check the validity of your pip installs by looking at the Scheduler instance logs. But the Scheduler instance and WebServer instance do separate pip installs, and the Scheduler has access to the internet (only the WebServer is private), meaning it's possible for the Scheduler and WebServer instances to have different sets of pip dependencies if the Scheduler installs and the WebServer fails to do so.
+
+Honestly, and I know I shouldn't say this, but it's not normally a big deal if you leave this broken (SREs, avert your eyes); extra WebServer instance dependencies aren't usually important. But there is an issue as of writing with `apache-airflow-providers-amazon==7.1.0` (the default install for MWAA 2.5.1) that is backbreaking-- CloudWatch logging has a huge regression that makes the logs nearly unusable. So you definitely want to resolve this.
+
+Why does all of this matter? Because **one of the installation methods is to use `requirements.txt`, and if you are a normal Python developer you will want to do this, but this actually doesn't work on `PRIVATE_MODE`!** Worse, the MWAA documents mention that they recmomend using `plugins.zip` for three reasons, and I quote: (1) "Faster installation", "Fewer conflicts", "More resilience" (by this they clarify they mean version conflicts). **There is no mention of this `PRIVATE_MODE` gotcha as a reason to prefer `plugins.zip`.** Terrible communication in their docs.
+
+An alternative to `plugins.zip` is to set up a PyPI proxy or artifactory on the VPC. It does not make sense at our company's small-ish scale to do that (maybe it does at yours), so we go with the `plugins.zip` approach.
+
+Setting up the `plugins.zip` stuff in a sane-feeling way (i.e. not VCing a zip file) is not _that_ much less work than the artifactory, though, if we're being real. Smart continuous deployment of dependencies means checking local files against the S3 bucket, pip installing and zipping stuff, then reconfiguring the MWAA environment-- and MWAA does not provide a script that does all this for you. The sanest approach provided out of the box by MWAA documentation is a DAG script that does the updates for you, which is a manual deployment.
+
+All of this is a similar limitation of Cloud Composer (Google's competing product). You can't really blame AWS for doing exactly what they say they're doing by limiting inbound/outbound traffic with the webserver.
 
 ## Migration to new Airflow versions is excruciatingly painful
 
@@ -114,6 +130,8 @@ It's clear the person who manages these scripts is probably a junior engineer. *
 
 But again, ultimately, this migration script thing shouldn't exist in the first place!!! MWAA should allow me to do in-place migrations without having to go through all this trouble. I shouldn't need to go through all this misery just to do what is essentially a`pip install -r requirements.txt && airflow db upgrade`.
 
+One more note: you don't need to wait on Amazon to provide you the migration script to 2.5.1. You can just go to the Alembic migrations in the Airflow codebase and just read through it yourself, and manually implement them into the SQL that exports/imports the metadata store. This should take about 15 minutes of your life. No need to be blocked by AWS!
+
 ## The `mwaa-local-runner` is imperfect
 
 The `mwaa-local-runner` is the local runtime for MWAA. Overall, it does a decent job, and some of the issues I've been mildly annoyed by in the past (such as the hardcoded `dags/requirements.txt` path) have been fixed. Still, a few issues remain since the last time I checked:
@@ -126,9 +144,7 @@ The `mwaa-local-runner` is the local runtime for MWAA. Overall, it does a decent
 
 ## MWAA 2.5.1 adds a constraint for some reason (although you can cheat around it!)
 
-This is technically documented, so I guess F me for not reading the docs carefully, but I spent a long time figuring out why my webserver instance was cryptically failing to pip install all our deps when it worked locally.
-
-Turns out, in MWAA 2.5.1, they started enforcing that you use a constraint file in your dependencies; if you don't use one, they'll add one for you. Why? I don't know!!! The whole point of the constraint file is that it exists to serve as a stable and suggested release, but that you are also allowed to circumvent it if you want / need. It's merely a suggestion; if it was a hard requirement it would be pinned in the `setup.py`. Adding a _mandated_ constraint file just serves as a guardrail for the least qualified data engineers / devops engineers who don't know how to freeze deps, and pisses off people who have stable and frozen dependencies.
+In MWAA 2.5.1, they started enforcing that you use a constraint file in your dependencies; if you don't use one, they'll add one for you. Why? I don't know!!! The whole point of the constraint file is that it exists to serve as a stable and suggested release, but that you are also allowed to circumvent it if you want / need. It's merely a suggestion; if it was a hard requirement it would be pinned in the `setup.py`. Adding a _mandated_ constraint file just serves as a guardrail for the least qualified data engineers / devops engineers who don't know how to freeze deps, and pisses off people who have stable and frozen dependencies.
 
 So, anyway, how do you cheat around it? Simple: Just add a constraint file to the requirements, but then comment it out. Dead serious. Whatever regex they're doing to enforce the constraint can be tricked into thinking there is a constraint file by adding the following to your `requirements.txt`, inclusive of the `#` to comment it out:
 
@@ -144,7 +160,7 @@ Anyway, MWAA really, really, really should not be doing this constraint enforcem
 
 This is more of a funny observation than something that can likely be fixed, but it's still worth mentioning as a minor deployment quirk.
 
-If you point to a `requirements.txt` file or `dags/` folder that doesn't exist in the S3 bucket, your MWAA CloudFormation stack will go into ROLLBACK. Except, when you create the S3 bucket as part of the CloudFormation stack, the S3 bucket is empty!
+If you point to a `requirements.txt` file, `plugins.zip` file, or `dags/` folder that doesn't exist in the S3 bucket, your MWAA CloudFormation stack will go into ROLLBACK. Except, when you create the S3 bucket as part of the CloudFormation stack, the S3 bucket is empty!
 
 This means, for all intents and purposes, a full CloudFormation-managed deployment needs two stacks: one for the S3 bucket (you can throw the Lambda into this stack, too, if you're doing the trick I mention above), and another for the actual MWAA runtime.
 

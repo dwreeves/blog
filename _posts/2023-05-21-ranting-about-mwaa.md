@@ -20,7 +20,7 @@ In this post, I will be complaining about MWAA. This post is mainly aimed at use
 2. A wake-up call on what we MWAA users are missing out on.
 3. A call to action to demand more from AWS.
 
-It is also aimed, to some extent, at AWS in a "get your shit together" kind of way.
+It is also aimed, to some extent, at AWS in a "get your s%&t together" kind of way.
 
 Also, in this post, I will be skipping over a lot of context regarding Airflow. I will be taking for granted the reader knows about Airflow and its features.
 
@@ -44,7 +44,7 @@ Some of the things I am complaining about are AWS-owned open source code example
 
 I will not do that because I have at least a little bit of dignity. And you should not do that either. Have some dignity and don't work for free. **Don't contribute free code to fix any of these issues (unless you actually work at AWS).**
 
-It should be on AWS to fix these tools and make them better to use, not AWS's users. Apache Airflow is already an open source project that AWS ungratefully profits from. AWS up-charges for compute to cloud users for a shitty, customer-hostile wrapper around a piece of software that is free and open source. Big tech companies build off the free labor of open source and you should not contribute to this problem in the most direct way possible. Let Amazon's shareholders foot the bill of fixing these problems.
+It should be on AWS to fix these tools and make them better to use, not AWS's users. Apache Airflow is already an open source project that AWS ungratefully profits from. AWS up-charges for compute to cloud users for a customer-hostile wrapper around a piece of software that is free and open source. Big tech companies build off the free labor of open source and you should not contribute to this problem in the most direct way possible. Let Amazon's shareholders foot the bill of fixing these problems.
 
 ## Ask #2: Do not blame AWS engineers for what are ultimately problems of managerial priorities
 

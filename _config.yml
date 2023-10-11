@@ -3,7 +3,7 @@ description: >-
   I write things.
 baseurl: "/blog"
 url: "https://dwreeves.github.io"
-twitter_username: mueblesfeos
+# twitter_username:
 github_username:  dwreeves
 
 remote_theme: samarsault/plainwhite-jekyll
@@ -19,7 +19,6 @@ plainwhite:
   portfolio_image:  "assets/me.jpg"
 
   social_links:
-    twitter: mueblesfeos
     github: dwreeves
     linkedIn: in/daniel-reeves-27700545 # format: locale/username
 

@@ -101,7 +101,7 @@ I really enjoy tools like **rich-click** that piggyback on perfectly fine, exist
 
 # Making rich-click Resilient
 
-![rich-click](/blog/assets/2023-10-11/rich-click-logo.png)
+![rich-click](/blog/assets/2023-10-11/rich-click-logo-opaque.png)
 
 **rich-click** has always been a fine replacement for Click, but it could hardly hold a candle to Click itself in terms of reliability and robustness. This is not a dig on **rich-click**, rather it is a commendation of the incredible amount of effort and ingenuity that has gone into both designing and maintaining the Click library.
 
